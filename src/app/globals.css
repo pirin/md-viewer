@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: #FF8000;
+  --color-border: #1E1E1E;
+  --color-sidebar: #0A0A0A;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root {
+  --background: #000000;
+  --foreground: #D1D1D1;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Bloomberg-lite style adjustments */
+.prose {
+  color: #D1D1D1;
+  max-width: none;
+  line-height: 1.8;
+}
+
+/* Constrain text-oriented elements to readable width */
+.prose h1 { @apply text-white font-bold text-4xl mt-6 mb-2; max-width: 70ch; }
+.prose h2 { @apply text-white font-bold text-2xl mt-4 mb-2 border-b border-[#1E1E1E] pb-3; max-width: 70ch; }
+.prose h3 { @apply text-white font-bold text-xl mt-2 mb-2; max-width: 70ch; }
+
+.prose p { @apply mb-2; max-width: 70ch; }
+
+.prose ul { @apply list-disc mb-2 ml-8; max-width: 70ch; }
+.prose ol { @apply list-decimal mb-2 ml-8; max-width: 70ch; }
+.prose li { @apply mb-2; }
+
+.prose a {
+  color: var(--color-accent);
+  text-decoration: none;
+  @apply border-b border-transparent hover:border-accent transition-colors;
+}
+
+.prose code {
+  background: #1A1A1A;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: var(--font-geist-mono);
+  font-size: 0.9em;
+  color: #EEE;
+}
+
+.prose pre {
+  max-width: 70ch;
+}
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  margin: 4em 0;
+  overflow-x: auto;
+  display: block;
+}
+
+.prose th {
+  text-align: left;
+  border-bottom: 2px solid #1E1E1E;
+  padding: 1.25em 0.5em;
+  color: #FFFFFF;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+}
+
+.prose td {
+  border-bottom: 1px solid #1E1E1E;
+  padding: 1.25em 0.5em;
+}
+
+.prose tr:hover td {
+  background: #0A0A0A;
+}
+
+.prose blockquote {
+  @apply border-l-4 border-accent pl-8 py-2 italic my-16 text-[#AAA];
+  max-width: 70ch;
+}
+
+.prose hr {
+  @apply border-[#1E1E1E] my-24;
+}
+
+/* Dark scrollbars globally */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+* {
+  scrollbar-color: #333 transparent;
+  scrollbar-width: thin;
+}

@@ -1,0 +1,26 @@
+import path from 'path';
+
+// --- Server-only config ---
+
+export const contentDirs: string[] = (process.env.CONTENT_DIRS || 'reports,plans')
+  .split(',')
+  .map(d => d.trim())
+  .filter(Boolean);
+
+export const contentBaseDir: string =
+  process.env.CONTENT_BASE_DIR || path.join(process.cwd(), '..');
+
+export const filenameStripPrefixes: string[] = (process.env.NEXT_PUBLIC_FILENAME_STRIP_PREFIXES || '')
+  .split(',')
+  .map(p => p.trim())
+  .filter(Boolean);
+
+// --- Client-visible config (NEXT_PUBLIC_) ---
+
+export const brandName = process.env.NEXT_PUBLIC_BRAND_NAME || 'MD';
+export const brandAccent = process.env.NEXT_PUBLIC_BRAND_ACCENT || 'Viewer';
+export const tagline = process.env.NEXT_PUBLIC_TAGLINE || 'MARKDOWN RESEARCH VIEWER';
+export const version = process.env.NEXT_PUBLIC_VERSION || '0.1.0';
+export const siteTitle = process.env.NEXT_PUBLIC_SITE_TITLE || 'MD Viewer';
+export const siteDescription = process.env.NEXT_PUBLIC_SITE_DESCRIPTION || 'Markdown Research Viewer';
+export const storagePrefix = process.env.NEXT_PUBLIC_STORAGE_PREFIX || 'mdviewer';
