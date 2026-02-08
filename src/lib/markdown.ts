@@ -38,7 +38,9 @@ export const getFileTree = cache((): FileNode[] => {
 });
 
 export function formatName(name: string): string {
-  let result = name.replace(/\.md$/, '');
+  // Use only the last part of the path if it's a path
+  const baseName = name.split('/').pop() || name;
+  let result = baseName.replace(/\.md$/, '');
   for (const prefix of filenameStripPrefixes) {
     if (result.startsWith(prefix)) {
       result = result.slice(prefix.length);
@@ -82,16 +84,7 @@ function scanDirectory(dirPath: string, parentSlug: string): FileNode[] {
     const stats = fs.statSync(fullPath);
     const slug = `${parentSlug}/${item}`;
 
-    if (stats.isDirectory()) {
-      nodes.push({
-        name: formatName(item),
-        slug,
-        path: slug,
-        type: 'directory',
-        updatedAt: stats.mtimeMs,
-        children: scanDirectory(fullPath, slug),
-      });
-    } else if (item.endsWith('.md')) {
+    if (!stats.isDirectory() && item.endsWith('.md')) {
       nodes.push({
         name: formatName(item),
         slug: slug.replace(/\.md$/, ''),

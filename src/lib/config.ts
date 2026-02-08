@@ -3,7 +3,7 @@ import packageJson from '../../package.json';
 
 // --- Server-only config ---
 
-export const contentDirs: string[] = (process.env.CONTENT_DIRS || 'reports,plans')
+export const contentDirs: string[] = (process.env.CONTENT_DIRS || '')
   .split(',')
   .map(d => d.trim())
   .filter(Boolean);
