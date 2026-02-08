@@ -8,6 +8,7 @@ import { FileText, Folder, ChevronRight, ChevronDown, Star } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useFavorites, FilterMode } from '@/hooks/useFavorites';
+import { useExpandedFolders } from '@/hooks/useExpandedFolders';
 import { brandName, brandAccent, version } from '@/lib/config';
 
 function cn(...inputs: ClassValue[]) {
@@ -38,6 +39,7 @@ interface SidebarProps {
 export default function Sidebar({ tree, recentDays = 7 }: SidebarProps) {
   const [now] = React.useState(() => Date.now());
   const { favorites, filterMode, setFilterMode, toggleFavorite, isFavorite, favoritesCount } = useFavorites();
+  const { isExpanded, toggleFolder } = useExpandedFolders();
 
   const displayTree = React.useMemo(() => {
     if (filterMode === 'all') return tree;
@@ -68,6 +70,8 @@ export default function Sidebar({ tree, recentDays = 7 }: SidebarProps) {
                 now={now}
                 isFavorite={isFavorite}
                 toggleFavorite={toggleFavorite}
+                isExpanded={isExpanded}
+                toggleFolder={toggleFolder}
               />
             ))
           )}
@@ -89,6 +93,8 @@ interface SidebarNodeProps {
   now: number;
   isFavorite: (slug: string) => boolean;
   toggleFavorite: (slug: string) => void;
+  isExpanded: (path: string) => boolean;
+  toggleFolder: (path: string) => void;
 }
 
 const SidebarNode = React.memo(function SidebarNode({
@@ -98,9 +104,11 @@ const SidebarNode = React.memo(function SidebarNode({
   now,
   isFavorite,
   toggleFavorite,
+  isExpanded,
+  toggleFolder,
 }: SidebarNodeProps) {
   const pathname = usePathname();
-  const [isOpen, setIsOpen] = React.useState(true);
+  const isOpen = node.type === 'directory' ? isExpanded(node.path) : true;
   const [isHovered, setIsHovered] = React.useState(false);
   const isActive = pathname === `/viewer/${node.slug}`;
   const favorited = node.type === 'file' && isFavorite(node.slug);
@@ -115,7 +123,7 @@ const SidebarNode = React.memo(function SidebarNode({
     return (
       <div>
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => toggleFolder(node.path)}
           className="w-full flex items-center gap-2 px-2 py-1.5 text-sm font-semibold text-[#888] hover:text-white transition-colors"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
@@ -134,6 +142,8 @@ const SidebarNode = React.memo(function SidebarNode({
                 now={now}
                 isFavorite={isFavorite}
                 toggleFavorite={toggleFavorite}
+                isExpanded={isExpanded}
+                toggleFolder={toggleFolder}
               />
             ))}
           </div>
