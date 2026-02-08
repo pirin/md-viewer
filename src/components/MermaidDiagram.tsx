@@ -63,12 +63,28 @@ function processMermaidSvg(rawSvg: string): string {
   const svg = doc.querySelector('svg');
   if (!svg) return rawSvg;
 
-  // Inject a <style> block for interactive cursor styles
+  // Inject a <style> block for interactive and highlight styles
   const style = doc.createElementNS('http://www.w3.org/2000/svg', 'style');
   style.textContent = `
     path.flowchart-link, path[marker-end] { cursor: pointer; pointer-events: stroke; }
     .edge-hit-area { cursor: pointer; pointer-events: stroke; }
     .edgeLabel, span.edgeLabel { cursor: pointer; }
+    
+    /* Highlight Styles */
+    [data-edge-highlighted] {
+      filter: drop-shadow(0 0 6px var(--color-accent, #FF8000)) !important;
+    }
+    path[data-edge-highlighted], line[data-edge-highlighted] {
+      stroke: var(--color-accent, #FF8000) !important;
+      stroke-width: 3 !important;
+    }
+    g[data-edge-highlighted] rect {
+      stroke: var(--color-accent, #FF8000) !important;
+      stroke-width: 2 !important;
+    }
+    g[data-edge-highlighted] span, g[data-edge-highlighted] p, g[data-edge-highlighted] div {
+      color: var(--color-accent, #FF8000) !important;
+    }
   `;
   svg.prepend(style);
 
@@ -140,6 +156,9 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
   const resizeStartH = useRef(0);
 
   const [fullscreen, setFullscreen] = useState(false);
+  const [hasHighlights, setHasHighlights] = useState(false);
+  const [highlightedIndices, setHighlightedIndices] = useState<Set<string>>(new Set());
+  const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set());
   const svgContainerRef = useRef<HTMLDivElement>(null);
   const dragDistance = useRef(0);
 
@@ -149,9 +168,18 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
   useEffect(() => {
     initMermaid();
     let cancelled = false;
-    mermaid.render(idRef.current, chart).then(
+
+    // Optimize for vertical space: replace horizontal layouts (LR/RL) with Top-to-Bottom (TD)
+    const optimizedChart = chart.replace(/^\s*(graph|flowchart|stateDiagram-v2|stateDiagram)\s+(LR|RL)/i, '$1 TD');
+
+    mermaid.render(idRef.current, optimizedChart).then(
       ({ svg: renderedSvg }) => {
-        if (!cancelled) setSvg(processMermaidSvg(renderedSvg));
+        if (!cancelled) {
+          setSvg(processMermaidSvg(renderedSvg));
+          setHasHighlights(false);
+          setHighlightedIndices(new Set());
+          setHighlightedNodes(new Set());
+        }
       },
       (err) => {
         if (!cancelled) setError(String(err));
@@ -159,6 +187,30 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
     );
     return () => { cancelled = true; };
   }, [chart]);
+
+  // Synchronize highlights to the DOM after every render
+  useEffect(() => {
+    const container = svgContainerRef.current;
+    if (!container) return;
+
+    // Clear old highlights first to ensure sync
+    container.querySelectorAll('[data-edge-highlighted]').forEach((el) => {
+      el.removeAttribute('data-edge-highlighted');
+    });
+
+    // Apply edge highlights
+    highlightedIndices.forEach((idx) => {
+      container.querySelectorAll(`[data-edge-index="${idx}"]`).forEach((el) => {
+        el.setAttribute('data-edge-highlighted', '');
+      });
+    });
+
+    // Apply node highlights
+    highlightedNodes.forEach((nodeId) => {
+      const nodeEl = container.querySelector(`g#${CSS.escape(nodeId)}`);
+      if (nodeEl) nodeEl.setAttribute('data-edge-highlighted', '');
+    });
+  }, [svg, highlightedIndices, highlightedNodes, pan, zoom]); // Re-run on transform re-renders
 
   // Lock body scroll when fullscreen
   useEffect(() => {
@@ -218,30 +270,9 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
   }, []);
 
   const clearHighlights = useCallback(() => {
-    const container = svgContainerRef.current;
-    if (!container) return;
-    container.querySelectorAll('[data-edge-highlighted]').forEach((el) => {
-      el.removeAttribute('data-edge-highlighted');
-      el.querySelectorAll('path, line').forEach((p) => {
-        (p as SVGElement).style.stroke = '';
-        (p as SVGElement).style.strokeWidth = '';
-        (p as SVGElement).style.filter = '';
-      });
-      el.querySelectorAll('rect').forEach((r) => {
-        (r as SVGElement).style.stroke = '';
-        (r as SVGElement).style.strokeWidth = '';
-        (r as SVGElement).style.filter = '';
-      });
-      el.querySelectorAll('span, p, div').forEach((t) => {
-        (t as HTMLElement).style.color = '';
-        (t as HTMLElement).style.filter = '';
-      });
-      if (el.tagName === 'path' || el.tagName === 'line') {
-        (el as SVGElement).style.stroke = '';
-        (el as SVGElement).style.strokeWidth = '';
-        (el as SVGElement).style.filter = '';
-      }
-    });
+    setHighlightedIndices(new Set());
+    setHighlightedNodes(new Set());
+    setHasHighlights(false);
   }, []);
 
   const handlePointerUp = useCallback(() => {
@@ -249,8 +280,7 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
 
     if (dragging.current) {
       dragging.current = false;
-      // Empty space click (no drag) — clear highlights
-      if (wasClick) clearHighlights();
+      // Note: We no longer clear highlights on empty space clicks per user request
       return;
     }
 
@@ -261,77 +291,41 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
     if (!edge || !wasClick || !svgContainerRef.current) return;
 
     const container = svgContainerRef.current;
-    const accentColor = getComputedStyle(document.documentElement)
-      .getPropertyValue('--color-accent').trim() || '#FF8000';
-
-    const wasHighlighted = edge.hasAttribute('data-edge-highlighted');
-    clearHighlights();
-    if (wasHighlighted) return; // Toggle off
-
-    // --- Helpers ---
-    const applyEdgeHighlight = (el: Element) => {
-      el.setAttribute('data-edge-highlighted', '');
-      if (el.tagName === 'path' || el.tagName === 'line') {
-        (el as SVGElement).style.stroke = accentColor;
-        (el as SVGElement).style.strokeWidth = '3';
-        (el as SVGElement).style.filter = `drop-shadow(0 0 6px ${accentColor})`;
-      } else {
-        el.querySelectorAll('path, line').forEach((p) => {
-          (p as SVGElement).style.stroke = accentColor;
-          (p as SVGElement).style.strokeWidth = '3';
-          (p as SVGElement).style.filter = `drop-shadow(0 0 6px ${accentColor})`;
-        });
-        el.querySelectorAll('span, p, div').forEach((t) => {
-          (t as HTMLElement).style.color = accentColor;
-          (t as HTMLElement).style.filter = `drop-shadow(0 0 6px ${accentColor})`;
-        });
-      }
-    };
-
-    const highlightNode = (nodeId: string | null | undefined) => {
-      if (!nodeId) return;
-      const nodeEl = container.querySelector(`g#${CSS.escape(nodeId)}`);
-      if (!nodeEl) return;
-      nodeEl.setAttribute('data-edge-highlighted', '');
-      const rect = nodeEl.querySelector('rect');
-      if (rect) {
-        (rect as SVGElement).style.stroke = accentColor;
-        (rect as SVGElement).style.strokeWidth = '2';
-        (rect as SVGElement).style.filter = `drop-shadow(0 0 6px ${accentColor})`;
-      }
-      nodeEl.querySelectorAll('span, p, div').forEach((t) => {
-        (t as HTMLElement).style.color = accentColor;
-      });
-    };
-
-    // --- Determine edge index and find related elements ---
     const edgeIndex = edge.getAttribute('data-edge-index');
+    if (edgeIndex == null) return;
+
     const realPaths = Array.from(container.querySelectorAll('g.edgePaths > path.flowchart-link'));
-    const allLabels = Array.from(container.querySelectorAll('g.edgeLabels > g.edgeLabel'));
+    const edgePath = realPaths.find(p => p.getAttribute('data-edge-index') === edgeIndex);
 
-    // Find the real edge path (needed for node data attributes)
-    const edgePath = edgeIndex != null
-      ? realPaths.find(p => p.getAttribute('data-edge-index') === edgeIndex)
-      : null;
-
-    // Highlight the clicked element
-    applyEdgeHighlight(edge);
-
-    // Cross-highlight paired path ↔ label
-    const pairedLabel = edgeIndex != null
-      ? allLabels.find(l => l.getAttribute('data-edge-index') === edgeIndex)
-      : null;
-    if (pairedLabel && pairedLabel !== edge) applyEdgeHighlight(pairedLabel);
-
-    // If clicked a hit-area or label, also highlight the real path
-    if (edgePath && edgePath !== edge) applyEdgeHighlight(edgePath);
-
-    // Highlight connected source and target nodes
     const src = edge.getAttribute('data-source-node') || edgePath?.getAttribute('data-source-node');
     const tgt = edge.getAttribute('data-target-node') || edgePath?.getAttribute('data-target-node');
-    highlightNode(src);
-    highlightNode(tgt);
-  }, [clearHighlights]);
+
+    setHighlightedIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(edgeIndex)) next.delete(edgeIndex);
+      else next.add(edgeIndex);
+      
+      setHasHighlights(next.size > 0);
+      return next;
+    });
+
+    if (src || tgt) {
+      setHighlightedNodes((prev) => {
+        const next = new Set(prev);
+        // Note: For simplicity, we toggle node highlighting. 
+        // In a more complex graph, we'd check if any other active edges use these nodes.
+        if (src) {
+          if (next.has(src)) next.delete(src);
+          else next.add(src);
+        }
+        if (tgt) {
+          if (next.has(tgt)) next.delete(tgt);
+          else next.add(tgt);
+        }
+        return next;
+      });
+    }
+  }, []); // Synchronization is handled by the useEffect
 
   // ── Resize ─────────────────────────────────────────────────────────────
 
@@ -390,6 +384,15 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
       <div className={`absolute top-2 right-2 z-10 flex items-center gap-1 transition-opacity ${
         fullscreen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
       }`}>
+        {hasHighlights && (
+          <button
+            onClick={clearHighlights}
+            className="h-7 px-2 flex items-center justify-center rounded bg-[#1A1A1A] hover:bg-[#333] text-[#999] hover:text-white text-xs transition-colors border border-[#333] font-medium"
+            title="Clear highlights"
+          >
+            Clear
+          </button>
+        )}
         <button
           onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))}
           className="w-7 h-7 flex items-center justify-center rounded bg-[#1A1A1A] hover:bg-[#333] text-[#999] hover:text-white text-sm transition-colors"
