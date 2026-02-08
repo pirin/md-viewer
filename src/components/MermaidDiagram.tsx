@@ -53,9 +53,9 @@ function findEdge(el: Element, boundary: Element | null): Element | null {
 }
 
 /**
- * Process the raw SVG string from mermaid.render() to inject interactive styles
- * and hit-area paths. This is done on the string/DOM level so the modifications
- * survive React re-renders (dangerouslySetInnerHTML wipes DOM mutations).
+ * Process the raw SVG string from mermaid.render() to inject interactive styles,
+ * hit-area paths, and edge-to-node data attributes. Done at the string/DOM level
+ * so modifications survive React re-renders (dangerouslySetInnerHTML wipes DOM mutations).
  */
 function processMermaidSvg(rawSvg: string): string {
   const parser = new DOMParser();
@@ -72,14 +72,51 @@ function processMermaidSvg(rawSvg: string): string {
   `;
   svg.prepend(style);
 
-  // Clone each edge path as a wider invisible hit area
+  // --- Gather node centers from their transform attributes ---
+  const nodeEls = svg.querySelectorAll('g[class~="node"]');
+  const nodeCenters: Array<{ id: string; x: number; y: number }> = [];
+  nodeEls.forEach((n) => {
+    if (!n.id) return;
+    const t = (n.getAttribute('transform') || '').match(/translate\(\s*([\d.eE+-]+)\s*[,\s]\s*([\d.eE+-]+)/);
+    if (t) nodeCenters.push({ id: n.id, x: parseFloat(t[1]), y: parseFloat(t[2]) });
+  });
+
+  const closestNode = (px: number, py: number): string => {
+    let best = '', bestD = Infinity;
+    for (const n of nodeCenters) {
+      const d = (n.x - px) ** 2 + (n.y - py) ** 2;
+      if (d < bestD) { bestD = d; best = n.id; }
+    }
+    return best;
+  };
+
+  // --- Clone edge paths as hit areas & add edge-to-node data attributes ---
+  let edgeIdx = 0;
   svg.querySelectorAll('path.flowchart-link, path[marker-end]').forEach((p) => {
-    // Skip markers inside <defs>
     if (p.closest('defs') || p.closest('marker')) return;
+    const idx = edgeIdx++;
+
+    // Parse path start/end for geometric node matching
+    const d = p.getAttribute('d') || '';
+    const startM = d.match(/^M\s*([\d.eE+-]+)\s*[,\s]\s*([\d.eE+-]+)/);
+    const coords = [...d.matchAll(/([\d.eE+-]+)\s*[,\s]\s*([\d.eE+-]+)/g)];
+    if (startM && coords.length > 0) {
+      const last = coords[coords.length - 1];
+      p.setAttribute('data-source-node', closestNode(parseFloat(startM[1]), parseFloat(startM[2])));
+      p.setAttribute('data-target-node', closestNode(parseFloat(last[1]), parseFloat(last[2])));
+    }
+    p.setAttribute('data-edge-index', String(idx));
+
+    // Create wider invisible hit area for easier clicking
     const hit = p.cloneNode(true) as SVGPathElement;
     hit.setAttribute('class', 'edge-hit-area');
     hit.setAttribute('style', 'stroke: transparent; stroke-width: 16; fill: none;');
     p.parentElement?.insertBefore(hit, p.nextSibling);
+  });
+
+  // Tag edge labels with their index for cross-referencing
+  svg.querySelectorAll('g.edgeLabels > g.edgeLabel').forEach((label, i) => {
+    label.setAttribute('data-edge-index', String(i));
   });
 
   return new XMLSerializer().serializeToString(svg);
@@ -190,6 +227,11 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
         (p as SVGElement).style.strokeWidth = '';
         (p as SVGElement).style.filter = '';
       });
+      el.querySelectorAll('rect').forEach((r) => {
+        (r as SVGElement).style.stroke = '';
+        (r as SVGElement).style.strokeWidth = '';
+        (r as SVGElement).style.filter = '';
+      });
       el.querySelectorAll('span, p, div').forEach((t) => {
         (t as HTMLElement).style.color = '';
         (t as HTMLElement).style.filter = '';
@@ -226,8 +268,8 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
     clearHighlights();
     if (wasHighlighted) return; // Toggle off
 
-    // Apply highlight to the clicked edge
-    const applyHighlight = (el: Element) => {
+    // --- Helpers ---
+    const applyEdgeHighlight = (el: Element) => {
       el.setAttribute('data-edge-highlighted', '');
       if (el.tagName === 'path' || el.tagName === 'line') {
         (el as SVGElement).style.stroke = accentColor;
@@ -246,36 +288,49 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
       }
     };
 
-    applyHighlight(edge);
+    const highlightNode = (nodeId: string | null | undefined) => {
+      if (!nodeId) return;
+      const nodeEl = container.querySelector(`g#${CSS.escape(nodeId)}`);
+      if (!nodeEl) return;
+      nodeEl.setAttribute('data-edge-highlighted', '');
+      const rect = nodeEl.querySelector('rect');
+      if (rect) {
+        (rect as SVGElement).style.stroke = accentColor;
+        (rect as SVGElement).style.strokeWidth = '2';
+        (rect as SVGElement).style.filter = `drop-shadow(0 0 6px ${accentColor})`;
+      }
+      nodeEl.querySelectorAll('span, p, div').forEach((t) => {
+        (t as HTMLElement).style.color = accentColor;
+      });
+    };
 
-    // Cross-highlight: find paired path ↔ label by index
-    // Paths live in <g class="edgePaths">, labels in <g class="edgeLabels">
-    const allPaths = Array.from(container.querySelectorAll('g.edgePaths > path, g.edgePaths > .edge-hit-area'));
+    // --- Determine edge index and find related elements ---
+    const edgeIndex = edge.getAttribute('data-edge-index');
+    const realPaths = Array.from(container.querySelectorAll('g.edgePaths > path.flowchart-link'));
     const allLabels = Array.from(container.querySelectorAll('g.edgeLabels > g.edgeLabel'));
 
-    // Determine which list the clicked edge belongs to
-    const pathIdx = allPaths.indexOf(edge);
-    const cls = edge.getAttribute('class') || '';
-    const labelIdx = /edgeLabel/i.test(cls) ? allLabels.indexOf(edge) : -1;
+    // Find the real edge path (needed for node data attributes)
+    const edgePath = edgeIndex != null
+      ? realPaths.find(p => p.getAttribute('data-edge-index') === edgeIndex)
+      : null;
 
-    if (pathIdx >= 0) {
-      // Clicked a path — find the real path index (skip hit-area clones)
-      const realPaths = allPaths.filter(p => !p.classList.contains('edge-hit-area'));
-      const realIdx = realPaths.indexOf(edge);
-      // If clicked a hit-area, find the original path
-      if (realIdx < 0) {
-        const origPath = edge.previousElementSibling;
-        if (origPath) applyHighlight(origPath);
-        const origIdx = origPath ? realPaths.indexOf(origPath) : -1;
-        if (origIdx >= 0 && allLabels[origIdx]) applyHighlight(allLabels[origIdx]);
-      } else {
-        if (allLabels[realIdx]) applyHighlight(allLabels[realIdx]);
-      }
-    } else if (labelIdx >= 0) {
-      // Clicked a label — highlight paired path
-      const realPaths = allPaths.filter(p => !p.classList.contains('edge-hit-area'));
-      if (realPaths[labelIdx]) applyHighlight(realPaths[labelIdx]);
-    }
+    // Highlight the clicked element
+    applyEdgeHighlight(edge);
+
+    // Cross-highlight paired path ↔ label
+    const pairedLabel = edgeIndex != null
+      ? allLabels.find(l => l.getAttribute('data-edge-index') === edgeIndex)
+      : null;
+    if (pairedLabel && pairedLabel !== edge) applyEdgeHighlight(pairedLabel);
+
+    // If clicked a hit-area or label, also highlight the real path
+    if (edgePath && edgePath !== edge) applyEdgeHighlight(edgePath);
+
+    // Highlight connected source and target nodes
+    const src = edge.getAttribute('data-source-node') || edgePath?.getAttribute('data-source-node');
+    const tgt = edge.getAttribute('data-target-node') || edgePath?.getAttribute('data-target-node');
+    highlightNode(src);
+    highlightNode(tgt);
   }, [clearHighlights]);
 
   // ── Resize ─────────────────────────────────────────────────────────────
