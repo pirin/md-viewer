@@ -156,10 +156,12 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
   const resizeStartH = useRef(0);
 
   const [fullscreen, setFullscreen] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [hasHighlights, setHasHighlights] = useState(false);
   const [highlightedIndices, setHighlightedIndices] = useState<Set<string>>(new Set());
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set());
   const svgContainerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const dragDistance = useRef(0);
 
   // Track whether pointerDown landed on an edge (skip panning if so)
@@ -230,10 +232,31 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen]);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z - e.deltaY * 0.002)));
-  }, []);
+  // Click outside the diagram wrapper clears focus
+  useEffect(() => {
+    if (!focused) return;
+    const onClick = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setFocused(false);
+      }
+    };
+    window.addEventListener('pointerdown', onClick);
+    return () => window.removeEventListener('pointerdown', onClick);
+  }, [focused]);
+
+  // Native wheel listener — must be non-passive to allow preventDefault when focused
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp || !focused) return; // unfocused: no listener, page scrolls normally
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z - e.deltaY * 0.002)));
+    };
+
+    vp.addEventListener('wheel', onWheel, { passive: false });
+    return () => vp.removeEventListener('wheel', onWheel);
+  }, [focused]);
 
   // ── Panning (only on empty space) ──────────────────────────────────────
 
@@ -354,7 +377,10 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
   }, []);
 
   const toggleFullscreen = useCallback(() => {
-    setFullscreen((f) => !f);
+    setFullscreen((f) => {
+      if (!f) setFocused(true); // entering fullscreen implies focus
+      return !f;
+    });
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }, []);
@@ -375,11 +401,13 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
 
   const wrapperClass = fullscreen
     ? 'fixed inset-0 z-50 bg-[#0A0A0A] flex flex-col'
-    : 'my-8 rounded border border-[#1E1E1E] bg-[#0A0A0A] relative group';
+    : `my-8 rounded border bg-[#0A0A0A] relative group transition-colors ${
+        focused ? 'border-[var(--color-accent,#FF8000)]' : 'border-[#1E1E1E]'
+      }`;
 
   // mermaid.render() produces sanitized SVG (uses DOMPurify internally)
   return (
-    <div className={wrapperClass}>
+    <div ref={wrapperRef} className={wrapperClass}>
       {/* Controls */}
       <div className={`absolute top-2 right-2 z-10 flex items-center gap-1 transition-opacity ${
         fullscreen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -435,7 +463,7 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
       {/* Viewport */}
       <div
         ref={viewportRef}
-        onWheel={handleWheel}
+        onClick={() => { if (!focused) setFocused(true); }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
